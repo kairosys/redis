@@ -1,64 +1,115 @@
-# Redis in Kubernetes (Local Development)
+<h1 align="center">Redis</h1>
+<p align="center">
+  <strong>Standalone Redis 8 in Kubernetes</strong>
+  <br />
+  <em>Backed by hostPath persistence · Password-protected · noeviction policy</em>
+</p>
 
-Standalone single-instance **Redis 8** (`redis:8-alpine`) for local development, deployed into the `default` namespace. It serves as a backing store for queued jobs and is configured with password authentication plus a non-evicting eviction policy so queue data does not disappear under load.
+<p align="center">
+  <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-DC382D?style=for-the-badge" alt="Quick Start" /></a>
+</p>
 
-## Architecture & Specs
+<p align="center">
+  <img src="https://img.shields.io/badge/Redis-DC382D?style=flat&logo=redis&logoColor=white" alt="Redis" />
+  <img src="https://img.shields.io/badge/Kubernetes-326CE5?style=flat&logo=kubernetes&logoColor=white" alt="Kubernetes" />
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white" alt="Docker" />
+</p>
 
-| Aspect | Detail |
-|---|---|
-| Image | `redis:8-alpine` |
-| Namespace | `default` |
-| Replicas | 1 (Deployment) |
-| Service | `ClusterIP` on port **6379** → targetPort **6379** (`app=redis`) |
-| Storage | Inline `hostPath` volume, mountPath `/data`; host directory `/mnt/workspaces/redis/data`, type `DirectoryOrCreate`. *No PVC/PV exists in these manifests.* Local `data/` is gitignored. |
-| Requests | cpu: `50m`, memory: `64Mi` |
-| Limits | cpu: `500m`, memory: `256Mi` |
+<!-- AUTO-GENERATED -->
 
-> No `livenessProbe`/`readinessProbe` are defined, so the Deployment reports ready as soon as the container starts. No PodDisruptionBudget is configured; a rolling restart may briefly evict in-flight traffic.
+## Features
 
-## Configuration & Secrets
+- **Password authentication** — `--requirepass` via Kubernetes Secret, never hardcoded in manifests
+- **Persistent storage** — `hostPath` volume mounted at `/data`; survives pod restarts
+- **Data protection** — `noeviction` policy rejects writes when memory limit (256Mi) is reached instead of dropping keys
+- **Single replica** — minimal deployment for local development; no clustering overhead
 
-Only one secret value is referenced by these manifests:
+## Quick Start
 
-| Field | Source | Notes |
+```bash
+kubectl apply -f k8s/redis-secret.yaml          # first — Deployment references it
+kubectl apply -f k8s/redis-deployment.yaml       # creates Service + Deployment
+```
+
+## Usage
+
+```bash
+POD=$(kubectl get pod -l app=redis -o jsonpath='{.items[0].metadata.name}')
+kubectl exec "$POD" -- redis-cli -a "$REDIS_PASS" PING
+kubectl exec "$POD" -- redis-cli -a "$REDIS_PASS" INFO MEMORY
+```
+
+Reset persistence:
+```bash
+kubectl delete pod "$POD"                         # pod recreates, hostPath remounts
+```
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph K8s["Kubernetes (default namespace)"]
+        SVC["Service: redis<br/>ClusterIP:6379"]
+        DEP["Deployment: redis<br/>1 replica"]
+        CONTAINER["redis:8-alpine<br/>--requirepass $(REDIS_PASS)<br/>--maxmemory-policy noeviction"]
+        SECRET["Secret: redis-secret<br/>REDIS_PASS"]
+    end
+
+    HOST["Host: /mnt/workspaces/redis/data<br/>(hostPath volume)"]
+
+    SVC --> DEP
+    DEP --> CONTAINER
+    SECRET -.-> CONTAINER
+    CONTAINER --> HOST
+
+    class SVC,DEP,CONTAINER,SECRET k8s
+    class HOST host
+
+    classDef k8s fill:#326CE5,stroke:#fff,stroke-width:1px,color:#fff
+    classDef host fill:#DC382D,stroke:#fff,stroke-width:1px,color:#fff
+```
+
+## Configuration
+
+| Setting | Value | Source |
 |---|---|---|
-| `REDIS_PASS` | Injected via env-var into `--requirepass $(REDIS_PASS)` from Kubernetes Secret `redis-secret`. Not committed: see `.gitignore` (`k8s/*-secret.yaml`). Password is plaintext in the checked-in YAML under `stringData.REDIS_PASS`. Keep out of version control. |
+| Image | `redis:8-alpine` | `redis-deployment.yaml` |
+| Namespace | `default` | `redis-deployment.yaml` |
+| Replicas | 1 | `redis-deployment.yaml` |
+| Service | `ClusterIP` port 6379 | `redis-deployment.yaml` |
+| Memory limit | 256Mi | `redis-deployment.yaml` |
+| CPU limit | 500m | `redis-deployment.yaml` |
+| Storage | `hostPath` `/mnt/workspaces/redis/data` | `redis-deployment.yaml` |
+| Password | Injected from `redis-secret` | `k8s/redis-secret.yaml` (gitignored) |
 
-Redis runtime flags (passed as a container command override) are not environment variables but still shape behavior:
-```yaml
-command: ["redis-server", "--maxmemory-policy", "noeviction", "--requirepass", "$(REDIS_PASS)"]
+## Directory Structure
+
 ```
-- `REDIS_PORT` is **not** set in any Secret or manifest; the Service uses the default Redis port 6379.
-- Database index defaults to Redis's standard DB `0`; no `--databases`/`SELECT` override appears in these manifests.
+├── AGENTS.md              # Agent instructions & diagnostics
+├── data/                  # Persistent data (gitignored)
+└── k8s/
+    ├── redis-deployment.yaml   # Service + Deployment
+    └── redis-secret.yaml       # Secret (gitignored)
+```
 
-> ⚠️ Network-policy note: `maxmemory-policy=noeviction` means once **`256Mi`** memory usage exceeds limit, writes will fail with errors instead of evicting keys — expect this when queues fill rapidly during local load tests.
+## Deployment
 
-## Deployment Guide
+Apply manifests in order. The Secret must exist before the Deployment starts, since the container command references `$(REDIS_PASS)` at launch:
 
-Apply in order; the Secret must exist before the Deployment starts because the pod command references `$(REDIS_PASS)` at container launch:
 ```bash
-kubectl apply -f k8s/redis-secret.yaml      # creates Secret in default namespace
-kubectl apply -f k8s/redis-deployment.yaml  # creates Service + Deployment
+kubectl apply -f k8s/redis-secret.yaml
+kubectl apply -f k8s/redis-deployment.yaml
 ```
 
-## Health Checks & Diagnostics
+No `livenessProbe` or `readinessProbe` is configured — the pod reports ready as soon as the container starts. No PodDisruptionBudget; a rolling restart may briefly evict in-flight traffic.
 
-Validate the deployment and reachability (the password below is read from Secret `redis-secret`; never hardcode it into your commands in committed docs):
-```bash
-# 1. Confirm pod is running and its name:
-POD=$(kubectl get pods -l app=redis -o jsonpath='{.items[0].metadata.name}') && \
-kubectl wait --for=condition=ready "pod/$POD"
+## Contributing
 
-# 2. From inside the pod, test Redis auth + reachability:
-PASS=$(kubectl get secret redis-secret -o jsonpath='{.data.REDIS_PASS}' | base64 -d) && \
-kubectl exec "pod/$POD" -- redis-cli -a "$PASS" ping      # expect: PONG
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/improvement`)
+3. Commit changes (`git commit -m 'Add improvement'`)
+4. Push and open a pull request
 
-# Inspect memory and config (same $PASS pattern applies):
-kubectl exec "$POD" -- redis-server --version             # Redis 8.x
-kubectl exec "$POD" -- redis-cli -a "$PASS" INFO MEMORY
-kubectl exec "$POD" -- redis-cli -a "$PASS" CONFIG GET maxmemory-policy    # noeviction
+No LICENSE file detected. Add a LICENSE to clarify project licensing.
 
-# Local data directory is gitignored — to reset persistence:
-kubectl delete pod "$POD"             # Pod will recreate with hostPath remount
-rm /mnt/workspaces/redis/data/dump.rdb                # clears the local mount source if you restart minikube/kind afterward
-```
+<!-- BEAUTIFIED -->
