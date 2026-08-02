@@ -7,6 +7,7 @@
 
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/Quick_Start-DC382D?style=for-the-badge" alt="Quick Start" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue?style=for-the-badge" alt="License" /></a>
 </p>
 
 <p align="center">
@@ -110,6 +111,6 @@ No `livenessProbe` or `readinessProbe` is configured — the pod reports ready a
 3. Commit changes (`git commit -m 'Add improvement'`)
 4. Push and open a pull request
 
-No LICENSE file detected. Add a LICENSE to clarify project licensing.
+Licensed under [MIT](LICENSE).
 
 <!-- BEAUTIFIED -->
