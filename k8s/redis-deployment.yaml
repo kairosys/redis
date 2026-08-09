@@ -33,13 +33,23 @@ spec:
         - name: redis
           image: redis:8-alpine
           imagePullPolicy: IfNotPresent
-          command: ["redis-server", "--maxmemory-policy", "noeviction", "--requirepass", "$(REDIS_PASS)"]
+          command:
+            [
+              "redis-server",
+              "--maxmemory-policy",
+              "noeviction",
+              "--requirepass",
+              "$(REDIS_PASS)",
+            ]
           ports:
             - containerPort: 6379
               name: redis
           envFrom:
             - secretRef:
                 name: redis-secret
+          env:
+            - name: TZ
+              value: "Asia/Hong_Kong"
           resources:
             requests:
               memory: "64Mi"
